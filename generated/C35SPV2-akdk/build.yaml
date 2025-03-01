@@ -1,0 +1,15 @@
+
+include:
+  - board: akdk_bt1
+    shield: C35SPV2_left
+    snippet: studio-rpc-usb-uart
+    cmake-args: -DCONFIG_ZMK_STUDIO=y
+    artificial-name: C35SPV2_left
+  - board: akdk_bt1
+    shield: C35SPV2_right
+    snippet: studio-rpc-usb-uart
+    cmake-args: -DCONFIG_ZMK_STUDIO=y
+    artificial-name: C35SPV2_right
+  - board: akdk_bt1
+    shield: settings_reset
+    artificial-name: settings_reset-akdk_bt1-zmk

@@ -1,0 +1,4 @@
+config SHIELD_C35SPV2_LEFT
+    def_bool $(shields_list_contains,C35SPV2_left)
+config SHIELD_C35SPV2_RIGHT
+    def_bool $(shields_list_contains,C35SPV2_right)

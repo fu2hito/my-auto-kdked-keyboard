@@ -1,0 +1,10 @@
+{
+    "include": [
+        {
+            "keyboard": "c24mx",
+            "keymap": "vial",
+            "target": "uf2",
+            "name": "c24mx_vial"
+        }
+    ]
+}

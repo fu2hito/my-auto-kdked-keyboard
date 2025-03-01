@@ -1,0 +1,14 @@
+
+file_format: "1"
+id: C35SPV2
+name: C35SPV2
+type: shield
+features:
+  - keys
+  - studio
+outputs:
+  - usb
+  - ble
+siblings:
+  - C35SPV2_left
+  - C35SPV2_right
