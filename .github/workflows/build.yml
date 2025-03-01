@@ -1,0 +1,144 @@
+name: Build Firmware
+
+on:
+  push:
+    paths:
+      - 'generated/**'
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'generated/**'
+  workflow_dispatch:
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      zmk_keyboards: ${{ steps.find-keyboards.outputs.zmk_keyboards }}
+      qmk_keyboards: ${{ steps.find-keyboards.outputs.qmk_keyboards }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - id: find-keyboards
+        run: |
+          # Find ZMK keyboards (those with build.yaml)
+          zmk_dirs=$(find generated -name "build.yaml" -exec dirname {} \; | jq -R -s -c 'split("\n")[:-1]')
+          echo "zmk_keyboards=$zmk_dirs" >> $GITHUB_OUTPUT
+          
+          # Find QMK keyboards (those with target.json)
+          qmk_dirs=$(find generated -name "target.json" -exec dirname {} \; | jq -R -s -c 'split("\n")[:-1]')
+          echo "qmk_keyboards=$qmk_dirs" >> $GITHUB_OUTPUT
+
+  build-zmk:
+    needs: detect
+    if: ${{ needs.detect.outputs.zmk_keyboards != '[]' }}
+    strategy:
+      matrix:
+        keyboard: ${{ fromJson(needs.detect.outputs.zmk_keyboards) }}
+      fail-fast: false
+    uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@main
+    with:
+      build_matrix_path: ${{ matrix.keyboard }}/build.yaml
+      config_path: ${{ matrix.keyboard }}/config
+      archive_name: ${{ format('firmware-{0}', matrix.keyboard) }}
+
+  build-qmk:
+    needs: detect
+    if: ${{ needs.detect.outputs.qmk_keyboards != '[]' }}
+    strategy:
+      matrix:
+        keyboard: ${{ fromJson(needs.detect.outputs.qmk_keyboards) }}
+      fail-fast: false
+    runs-on: ubuntu-latest
+    container: qmkfm/qmk_cli@sha256:a78acc2b7de1f476f33dd0d069c0e74ddfdb52c18b9a504c7cce32303cfa7aa2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Checkout Vial-QMK
+        uses: actions/checkout@v4
+        with:
+          repository: vial-kb/vial-qmk
+          ref: 5c633c13a2cccbe0d295bdc6b38484ffa1b55527
+          path: vial-qmk
+
+      - name: Replace keyboards directory
+        run: |
+          rm -rf vial-qmk/keyboards
+          cp -r repo/${{ matrix.keyboard }}/qmk_firmware/keyboards vial-qmk/
+
+      - name: Setup QMK
+        working-directory: vial-qmk
+        run: |
+          python3 -m pip install -r requirements.txt
+          qmk setup -y
+
+      - name: Get build targets
+        id: get-targets
+        run: |
+          content=$(cat repo/${{ matrix.keyboard }}/target.json)
+          echo "matrix=$content" >> $GITHUB_OUTPUT
+
+      - name: Build firmware
+        working-directory: vial-qmk
+        env:
+          BUILD_MATRIX: ${{ steps.get-targets.outputs.matrix }}
+        run: |
+          echo "$BUILD_MATRIX" | jq -c '.include[]' | while read -r item; do
+            keyboard=$(echo "$item" | jq -r '.keyboard')
+            keymap=$(echo "$item" | jq -r '.keymap')
+            target=$(echo "$item" | jq -r '.target')
+            name=$(echo "$item" | jq -r '.name')
+            flags=$(echo "$item" | jq -r '.flags // ""')
+            
+            make "$keyboard:$keymap:$target" $flags
+            mv .build/${keyboard}_${keymap}.$target .build/$name.$target
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.keyboard }}
+          path: vial-qmk/.build/*
+          if-no-files-found: error
+
+  create-release:
+    needs: [build-zmk, build-qmk]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all workflow run artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+          pattern: firmware-*
+          merge-multiple: true
+
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create release
+          tag_name="${GITHUB_REF#refs/tags/}"
+          release_name="Release ${tag_name}"
+          
+          # Generate release notes
+          echo "## Firmware Build Summary" > release_notes.md
+          echo "" >> release_notes.md
+          
+          # List all built firmware
+          echo "### Available Firmware" >> release_notes.md
+          for file in all-artifacts/*; do
+            echo "- $(basename "$file")" >> release_notes.md
+          done
+
+          # Create GitHub Release
+          gh release create "$tag_name" \
+            --title "$release_name" \
+            --notes-file release_notes.md \
+            all-artifacts/*
